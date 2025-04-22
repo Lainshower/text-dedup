@@ -1,0 +1,60 @@
+#!/bin/bash
+
+#
+# parameters
+#
+#SBATCH --job-name=text_dedup
+#SBATCH --nodes=4
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=32
+#SBATCH --time=24:00:00
+#SBATCH --mem=128G
+#SBATCH --output=dedup_%j.out
+#SBATCH --error=dedup_%j.err
+
+# Load required modules (modify according to your system)
+module load python/3.8
+module load cuda/11.7
+
+# Set environment variables
+export TOTAL_NODES=$SLURM_JOB_NUM_NODES
+export PYTHONPATH=/home/joonwon/text-dedup:$PYTHONPATH
+
+# Print job information
+echo "Job started at: $(date)"
+echo "Running on $SLURM_JOB_NUM_NODES nodes"
+echo "Node list: $SLURM_JOB_NODELIST"
+
+# Input and output paths
+input_dir="/home/joonwon/text-dedup/examples"
+output_dir="/home/joonwon/text-dedup/output"
+batch_size=10000
+num_proc=$SLURM_CPUS_PER_TASK
+threshold=0.8
+num_perm=256
+ngram=3
+min_length=5
+hash_bits=64
+# LSH parameters (set to empty for automatic optimization)
+b=""  # Number of bands
+r=""  # Number of rows
+
+# Create log directory if it doesn't exist
+mkdir -p /home/joonwon/text-dedup/logs
+
+# Run the deduplication script on each node
+srun python -m text_dedup.minhash_mn \
+    --input_dir "${input_dir}" \
+    --output "${output_dir}/dedup.jsonl" \
+    --column "text" \
+    --batch_size ${batch_size} \
+    --num_proc ${num_proc} \
+    --threshold ${threshold} \
+    --num_perm ${num_perm} \
+    --ngram ${ngram} \
+    --min_length ${min_length} \
+    --hash_bits ${hash_bits} \
+    ${b:+--b ${b}} \
+    ${r:+--r ${r}}
+
+echo "Job finished at: $(date)"

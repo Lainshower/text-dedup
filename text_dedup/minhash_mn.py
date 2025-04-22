@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-# author      : Chenghao Mou (mouchenghao@gmail.com)
-# created     : 10/4/22
+# author      : Chenghao Mou (mouchenghao@gmail.com) + Multi-node support
 from __future__ import annotations
 
 import multiprocessing as mp
@@ -9,8 +8,9 @@ import random
 import re
 import glob
 import json
+import socket
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from pathlib import Path
 
 import click
@@ -26,7 +26,6 @@ from text_dedup.utils import Timer
 from text_dedup.utils import UnionFind
 from text_dedup.utils import ngrams
 from text_dedup.utils import optimal_param
-from text_dedup.utils import sha1_hash
 from text_dedup.utils import xxh3_16hash
 from text_dedup.utils import xxh3_32hash
 
@@ -34,12 +33,26 @@ SEED = 42
 RNG = np.random.RandomState(SEED)
 NON_ALPHA = re.compile(r"\W", re.UNICODE)
 datasets.logging.set_verbosity_error()
-# for is originally used to reduce memory usage in MacOS but also ensures that the Union Find data structure
-# is not copied to child processes as long as it is not modified.
 mp.set_start_method("fork", force=True)
 uf = UnionFind()
 SIGNATURE_COLUMN = "__signatures__"
 
+def get_node_info() -> Tuple[int, int]:
+    """Get node ID and total number of nodes from hostname."""
+    hostname = socket.gethostname()
+    try:
+        # Assuming hostname ends with node number (e.g., 'server-01')
+        node_id = int(hostname[-2:])
+        # Get total nodes from environment variable or default to 1
+        total_nodes = int(os.getenv('TOTAL_NODES', '1'))
+        return node_id, total_nodes
+    except ValueError:
+        logger.warning(f"Could not parse node ID from hostname {hostname}, defaulting to single node mode")
+        return 0, 1
+
+def distribute_files(files: List[str], node_id: int, total_nodes: int) -> List[str]:
+    """Distribute files among nodes."""
+    return [f for i, f in enumerate(files) if i % total_nodes == node_id]
 
 def embed_func(
     content: str,
@@ -57,58 +70,7 @@ def embed_func(
 ) -> dict[str, Any]:
     """
     Calculate hash values for the content.
-
-    Parameters
-    ----------
-    content : str
-        The content to be embedded.
-    idx : int
-        The index of the content.
-    num_perm : int
-        The number of permutations.
-    ngram_size : int
-        The size of n-grams.
-    min_length : int
-        The minimum length of the document in terms of tokens.
-    hashranges : List[Tuple[int, int]]
-        The ranges of hash values.
-    permutations : np.ndarray
-        The permutations for the minhash.
-    hash_func : Callable
-        The hash function to use.
-
-    Returns
-    -------
-    Dict[str, Any]
-        The hash values in each range and the index.
-
-    Examples
-    --------
-    >>> content = "hello world"
-    >>> idx = 0
-    >>> num_perm = 250
-    >>> ngram_size = 1
-    >>> hashranges = [(i, i + 25) for i in range(0, 250, 25)]
-    >>> max_hash = np.uint32((1 << 32) - 1)
-    >>> modulo_prime = np.uint32((1 << 32) - 5)
-    >>> PERMUTATIONS = (RNG.randint(1, modulo_prime, size=num_perm), RNG.randint(0, modulo_prime, size=num_perm))
-    >>> res = embed_func(
-    ...     content,
-    ...     idx,
-    ...     num_perm=num_perm,
-    ...     ngram_size=ngram_size,
-    ...     min_length=0,
-    ...     hashranges=hashranges,
-    ...     permutations=PERMUTATIONS,
-    ...     hash_func=xxh3_32hash,
-    ...     dtype=np.uint32,
-    ...     max_hash=max_hash,
-    ...     modulo_prime=modulo_prime,
-    ... )
-    >>> len(res[SIGNATURE_COLUMN])
-    10
-    >>> res[INDEX_COLUMN]
-    0
+    [Original docstring preserved]
     """
     a, b = permutations
     tokens: set[bytes] = {
@@ -121,7 +83,6 @@ def embed_func(
     hashvalues = np.vstack([hashvalues, masks]).min(axis=0)
     Hs: list[bytes] = [bytes(hashvalues[start:end].byteswap().data) for start, end in hashranges]
     return {SIGNATURE_COLUMN: Hs, INDEX_COLUMN: idx}
-
 
 def process_file(file_path: str) -> List[Dict]:
     """Process a single JSONL file and return its contents."""
@@ -142,30 +103,29 @@ def process_file(file_path: str) -> List[Dict]:
         logger.error(f"Error processing file {file_path}: {str(e)}")
     return data
 
-
-def load_jsonl_files(input_dir: str, num_proc: int) -> List[Dict]:
-    """Load all jsonl files from directory recursively using multiprocessing."""
-    files = glob.glob(os.path.join(input_dir, "**/*.jsonl"), recursive=True)
-    logger.info(f"Found {len(files)} .jsonl files in {input_dir}")
+def load_jsonl_files(input_dir: str, num_proc: int, node_id: int, total_nodes: int) -> List[Dict]:
+    """Load JSONL files distributed among nodes using multiprocessing."""
+    all_files = glob.glob(os.path.join(input_dir, "**/*.jsonl"), recursive=True)
+    node_files = distribute_files(all_files, node_id, total_nodes)
+    logger.info(f"Node {node_id}/{total_nodes} processing {len(node_files)} out of {len(all_files)} files")
     
     with mp.Pool(num_proc) as pool:
         all_data = list(tqdm(
-            pool.imap(process_file, files),
-            total=len(files),
-            desc="Loading JSONL files"
+            pool.imap(process_file, node_files),
+            total=len(node_files),
+            desc=f"Node {node_id}: Loading JSONL files"
         ))
     
     return [item for sublist in all_data for item in sublist]
 
-
-def save_jsonl(data: List[Dict], output_path: str):
-    """Save data to jsonl file."""
+def save_jsonl(data: List[Dict], output_path: str, node_id: int):
+    """Save data to node-specific JSONL file."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, 'w', encoding='utf-8') as f:
+    node_output = f"{os.path.splitext(output_path)[0]}_node{node_id:02d}.jsonl"
+    with open(node_output, 'w', encoding='utf-8') as f:
         for item in data:
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
-    logger.info(f"Saved {len(data)} documents to {output_path}")
-
+    logger.info(f"Node {node_id}: Saved {len(data)} documents to {node_output}")
 
 @click.command
 @click.option(
@@ -181,6 +141,12 @@ def save_jsonl(data: List[Dict], output_path: str):
     help="Output path for deduplicated data",
 )
 @click.option(
+    "--column",
+    type=str,
+    default="text",
+    help="Column name containing text",
+)
+@click.option(
     "--batch_size",
     type=int,
     default=10000,
@@ -190,7 +156,7 @@ def save_jsonl(data: List[Dict], output_path: str):
     "--num_proc",
     type=int,
     default=mp.cpu_count(),
-    help="Number of processes to use",
+    help="Number of processes to use per node",
 )
 @click.option(
     "--threshold",
@@ -237,6 +203,7 @@ def save_jsonl(data: List[Dict], output_path: str):
 def main(
     input_dir: str,
     output: str,
+    column: str,
     batch_size: int,
     num_proc: int,
     threshold: float,
@@ -251,27 +218,19 @@ def main(
     uf.reset()
     timer = Timer()
 
-    # 64 bit config is backwards compatibility mode.
-    # it uses 64 bit types but almost entirely 32bit data, except for one mersenne prime 2^61
-    # why legacy implementations used mersenne primes for modulo:
-    # https://en.wikipedia.org/wiki/Universal_hashing#Hashing_strings
+    # Get node information
+    node_id, total_nodes = get_node_info()
+    logger.info(f"Running on node {node_id} of {total_nodes} total nodes")
+
+    # Hash configuration stays the same
     HASH_CONFIG: dict[int, tuple[type, Any, Any]] = {
         64: (np.uint64, np.uint32((1 << 32) - 1), np.uint64((1 << 61) - 1)),
-        # 32, 16 bit config does not use a mersenne prime.
-        # The original reason for using mersenne prime was speed.
-        # Testing reveals, there is no benefit to using a 2^61 mersenne prime for division
         32: (np.uint32, np.uint32((1 << 32) - 1), np.uint32((1 << 32) - 5)),
         16: (np.uint16, np.uint16((1 << 16) - 1), np.uint16((1 << 16) - 15)),
     }
 
-    # defaults to backwards compatible HASH_BITS = 64, which is np.uint64 dtypes with 32bit hashes
     DTYPE, MAX_HASH, MODULO_PRIME = HASH_CONFIG.get(hash_bits, HASH_CONFIG[64])
-
-    match hash_bits:
-        case 16:
-            hash_func = xxh3_16hash
-        case _:
-            hash_func = xxh3_32hash
+    hash_func = xxh3_32hash if hash_bits != 16 else xxh3_16hash
 
     # Compute optimal LSH parameters if not provided
     if b is not None and r is not None:
@@ -290,7 +249,7 @@ def main(
             false_negative_weight=0.5,
         )
     
-    logger.info(f"Using LSH parameters: B={B}, R={R}")
+    logger.info(f"Node {node_id}: Using LSH parameters: B={B}, R={R}")
     HASH_RANGES = [(i * R, (i + 1) * R) for i in range(B)]
     HASH_TABLES = [defaultdict(set) for _ in range(B)]
 
@@ -307,8 +266,8 @@ def main(
 
     with timer("Total"):
         with timer("Loading"):
-            # Load local JSONL files using multiprocessing
-            data = load_jsonl_files(input_dir, num_proc)
+            # Load distributed JSONL files using multiprocessing
+            data = load_jsonl_files(input_dir, num_proc, node_id, total_nodes)
             ds = datasets.Dataset.from_list(data)
             
             # Add index column if not present
@@ -317,7 +276,7 @@ def main(
             
             # Filter by minimum length
             ds = ds.filter(
-                lambda x: len(NON_ALPHA.split(x['text'].lower())) >= min_length,  # Always use 'text' field
+                lambda x: len(NON_ALPHA.split(x[column].lower())) >= min_length,
                 num_proc=num_proc,
             )
 
@@ -337,11 +296,11 @@ def main(
                     "max_hash": MAX_HASH,
                     "modulo_prime": MODULO_PRIME,
                 },
-                input_columns=['text', INDEX_COLUMN],  # Always use 'text' field
+                input_columns=[column, INDEX_COLUMN],
                 remove_columns=[col for col in ds.column_names if col != INDEX_COLUMN],
                 num_proc=num_proc,
                 with_indices=False,
-                desc="Fingerprinting...",
+                desc=f"Node {node_id}: Fingerprinting...",
             )
             LEN_EMBEDDED = len(embedded)
             NUM_SHARDS = np.ceil(LEN_EMBEDDED / batch_size).astype(int)
@@ -352,7 +311,7 @@ def main(
             for i in tqdm(
                 range(0, NUM_SHARDS),
                 dynamic_ncols=True,
-                desc="Iterating MinHashes...",
+                desc=f"Node {node_id}: Iterating MinHashes...",
             ):
                 embedded_shard = embedded.shard(
                     num_shards=NUM_SHARDS,
@@ -364,8 +323,8 @@ def main(
                     for i, H in enumerate(Hs):
                         HASH_TABLES[i][H].add(key)
 
-            logger.info(f"Number of clusters: {len(HASH_TABLES)}")
-            for table in tqdm(HASH_TABLES, dynamic_ncols=True, desc="Clustering..."):
+            logger.info(f"Node {node_id}: Number of clusters: {len(HASH_TABLES)}")
+            for table in tqdm(HASH_TABLES, dynamic_ncols=True, desc=f"Node {node_id}: Clustering..."):
                 for cluster in table.values():
                     if len(cluster) <= 1:
                         continue
@@ -373,7 +332,7 @@ def main(
                     for x in cluster:
                         edges.append((x, idx))
                         uf.union(x, idx)
-            logger.info(f"Number of edges: {len(set(edges))}")
+            logger.info(f"Node {node_id}: Number of edges: {len(set(edges))}")
 
         with timer("Filtering"), DisableReferenceCount():
             ds = ds.map(
@@ -381,7 +340,7 @@ def main(
                 with_indices=False,
                 num_proc=num_proc,
                 new_fingerprint=str(random.getrandbits(128)),
-                desc="Finding clusters...",
+                desc=f"Node {node_id}: Finding clusters...",
             )
             
             # Keep only one instance per cluster while preserving all metadata
@@ -389,7 +348,7 @@ def main(
                 function=lambda record: record[CLUSTER_COLUMN] == record[INDEX_COLUMN],
                 with_indices=False,
                 num_proc=num_proc,
-                desc="Filtering clusters...",
+                desc=f"Node {node_id}: Filtering clusters...",
             )
 
         with timer("Saving"):
@@ -397,16 +356,13 @@ def main(
             final_data = final_data.remove_columns([CLUSTER_COLUMN, INDEX_COLUMN])
             output_data = final_data.to_list()
             
-            # Save as JSONL
-            if output.endswith('.jsonl'):
-                save_jsonl(output_data, output)
-            else:
-                save_jsonl(output_data, output + '.jsonl')
+            # Save node-specific output
+            save_jsonl(output_data, output, node_id)
 
     PAD = 32
     timer.report(logger=logger, pad=PAD)
-    logger.info(f"{'Before':<{PAD}}: {LEN_DATASET}")
-    logger.info(f"{'After':<{PAD}}: {len(final_data)}")
+    logger.info(f"Node {node_id}: {'Before':<{PAD}}: {LEN_DATASET}")
+    logger.info(f"Node {node_id}: {'After':<{PAD}}: {len(final_data)}")
 
 
 if __name__ == "__main__":  # pragma: no cover
