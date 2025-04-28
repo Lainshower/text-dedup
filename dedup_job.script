@@ -22,7 +22,7 @@ batch_size=10000
 threshold=0.8
 num_perm=256
 ngram=3
-min_length=5
+min_length=20
 hash_bits=64
 
 # Activate conda environment and run deduplication
