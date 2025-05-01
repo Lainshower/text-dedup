@@ -371,32 +371,76 @@ def main(
 ):
     node_id, total_nodes = get_node_info()
     logger.info(f"Running on node {node_id} of {total_nodes} total nodes")
+    
     if input_dirs:
         dirs = [d for d in input_dirs.replace(',', ' ').split() if d]
         lang_files = defaultdict(list)
+        
+        # First collect all language files (maintaining original logic)
         for d in dirs:
             for lang in os.listdir(d):
                 lang_dir = os.path.join(d, lang)
                 if os.path.isdir(lang_dir):
                     files = glob.glob(os.path.join(lang_dir, '*.jsonl'))
                     lang_files[lang].extend(files)
-        logger.info(f"Node {node_id}: Found languages: {list(lang_files.keys())}")
-        for lang, files in lang_files.items():
-            logger.info(f"Node {node_id}: Processing language {lang} with {len(files)} files")
-            if not files:
+        
+        # Sort languages for consistent processing
+        sorted_languages = sorted(lang_files.keys())
+        logger.info(f"Total languages found: {len(sorted_languages)}")
+        
+        # Create lock directory for language assignment
+        lock_dir = os.path.join(output, ".locks")
+        os.makedirs(lock_dir, exist_ok=True)
+        
+        # Process languages one by one
+        for lang in sorted_languages:
+            lock_file = os.path.join(lock_dir, f"{lang}.lock")
+            
+            # Try to acquire lock
+            try:
+                if os.path.exists(lock_file):
+                    logger.info(f"Language {lang} is already being processed by another node")
+                    continue
+                    
+                # Create lock file
+                with open(lock_file, 'w') as f:
+                    f.write(f"node_{node_id}")
+                
+                files = lang_files[lang]
+                if not files:
+                    logger.info(f"No files found for language {lang}")
+                    os.remove(lock_file)
+                    continue
+                
+                logger.info(f"Node {node_id} processing language: {lang} with {len(files)} files")
+                lang_output_dir = os.path.join(output, lang)
+                os.makedirs(lang_output_dir, exist_ok=True)
+                lang_output_path = os.path.join(lang_output_dir, f"dedup_node{node_id:02d}.jsonl")
+                
+                dedup_from_filelist(
+                    files, lang_output_path, column, batch_size, num_proc, 
+                    threshold, num_perm, ngram, min_length, hash_bits, b, r, 
+                    node_id, total_nodes
+                )
+                
+                # Release lock
+                os.remove(lock_file)
+                logger.info(f"Node {node_id} completed processing language: {lang}")
+                
+            except Exception as e:
+                logger.error(f"Error processing language {lang}: {str(e)}")
+                if os.path.exists(lock_file):
+                    os.remove(lock_file)
                 continue
-            lang_output_dir = os.path.join(output, lang)
-            os.makedirs(lang_output_dir, exist_ok=True)
-            lang_output_path = os.path.join(lang_output_dir, f"dedup_node{node_id:02d}.jsonl")
-            dedup_from_filelist(
-                files, lang_output_path, column, batch_size, num_proc, threshold, num_perm, ngram, min_length, hash_bits, b, r, node_id, total_nodes
-            )
+                
         return
+        
     # Fallback: original single-dir logic
     if input_dir:
         all_files = glob.glob(os.path.join(input_dir, "**/*.jsonl"), recursive=True)
         dedup_from_filelist(
-            all_files, output, column, batch_size, num_proc, threshold, num_perm, ngram, min_length, hash_bits, b, r, node_id, total_nodes
+            all_files, output, column, batch_size, num_proc, threshold, 
+            num_perm, ngram, min_length, hash_bits, b, r, node_id, total_nodes
         )
 
 if __name__ == "__main__":  # pragma: no cover

@@ -4,19 +4,19 @@
 # parameters
 #
 #SBATCH --job-name=dedup_multidir_joonwon.jang
-#SBATCH --output=/lab-exaone/joonwon.jang/lg_stack/text-dedup/log_dedup_%j_%u_%x.out
-#SBATCH --error=/lab-exaone/joonwon.jang/lg_stack/text-dedup/log_dedup_%j_%u_%x.err
+#SBATCH --output=/lab-exaone/joonwon.jang/lg_stack/text-dedup/log/over_1000stars/log_dedup_%j_%u_%x.out
+#SBATCH --error=/lab-exaone/joonwon.jang/lg_stack/text-dedup/log/over_1000stars/log_dedup_%j_%u_%x.err
 #SBATCH --chdir=/lab-exaone/joonwon.jang/
 #SBATCH --partition=all
-#SBATCH --nodes=12
-#SBATCH --nodelist=cluster-data-[03-14]
+#SBATCH --nodes=1
+#SBATCH --nodelist=cluster-data-[02]
 
 # Input/output directories (space-separated for multiple filtering outputs)
-input_dirs='/cl_data/exaone/joonwon.jang/pretrain/output_dir1 /cl_data/exaone/joonwon.jang/pretrain/output_dir2'
-output_dir='/cl_data/exaone/joonwon.jang/pretrain/final_dedup_output'
+input_dirs='/cl_data/exaone/joonwon.jang/pretrain/github_repos_2024_over_1000stars_raw/NON-PERMISSIVE_FILTERED_FILE /cl_data/exaone/joonwon.jang/pretrain/github_repos_2024_over_1000stars_raw/PERMISSIVE_FILTERED_FILE'
+output_dir='/cl_data/exaone/joonwon.jang/pretrain/github_repos_2024_over_1000stars_raw/NP-P-Dedup'
 
 # Resource and deduplication parameters
-n_nodes=12
+n_nodes=1
 n_cores=128
 batch_size=10000
 threshold=0.8
@@ -26,7 +26,7 @@ min_length=20
 hash_bits=64
 
 # Activate conda environment and run deduplication
-srun bash -c "source opc/bin/activate; cd lg_stack/text-dedup; python -m text_dedup.minhash_mn \
+srun bash -c "source dedup/bin/activate; cd lg_stack/text-dedup/text_dedup; python minhash_mn.py \
     --input_dirs \"${input_dirs}\" \
     --output \"${output_dir}\" \
     --batch_size ${batch_size} \
@@ -35,4 +35,4 @@ srun bash -c "source opc/bin/activate; cd lg_stack/text-dedup; python -m text_de
     --num_perm ${num_perm} \
     --ngram ${ngram} \
     --min_length ${min_length} \
-    --hash_bits ${hash_bits}\""
+    --hash_bits ${hash_bits}"
