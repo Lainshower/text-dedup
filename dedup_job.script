@@ -9,7 +9,6 @@
 #SBATCH --chdir=/lab-exaone/joonwon.jang/
 #SBATCH --partition=all
 #SBATCH --nodes=12
-#SBATCH --ntasks-per-node=1
 #SBATCH --nodelist=cluster-data-[03-14]
 
 # Input/output directories (space-separated for multiple filtering outputs)

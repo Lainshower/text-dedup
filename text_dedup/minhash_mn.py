@@ -125,13 +125,12 @@ def load_jsonl_files(input_dir: str, num_proc: int, node_id: int, total_nodes: i
     return [item for sublist in all_data for item in sublist]
 
 def save_jsonl(data: List[Dict], output_path: str, node_id: int):
-    """Save data to node-specific JSONL file."""
+    """Save data to language-specific JSONL file."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    node_output = f"{os.path.splitext(output_path)[0]}_node{node_id:02d}.jsonl"
-    with open(node_output, 'w', encoding='utf-8') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         for item in data:
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
-    logger.info(f"Node {node_id}: Saved {len(data)} documents to {node_output}")
+    logger.info(f"Node {node_id}: Saved {len(data)} documents to {output_path}")
 
 def dedup_from_filelist(file_list, output_path, column, batch_size, num_proc, threshold, num_perm, ngram, min_length, hash_bits, b, r, node_id, total_nodes):
     global uf
@@ -389,7 +388,12 @@ def main(
         
         # Create lock directory for language assignment
         lock_dir = os.path.join(output, ".locks")
-        os.makedirs(lock_dir, exist_ok=True)
+        try:
+            os.makedirs(lock_dir, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Could not create lock directory: {str(e)}")
+            lock_dir = os.path.join("/tmp", f"dedup_locks_{node_id}")
+            os.makedirs(lock_dir, exist_ok=True)
         
         # Process languages one by one
         for lang in sorted_languages:
