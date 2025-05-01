@@ -38,16 +38,15 @@ uf = UnionFind()
 SIGNATURE_COLUMN = "__signatures__"
 
 def get_node_info() -> Tuple[int, int]:
-    """Get node ID and total number of nodes from hostname."""
-    hostname = socket.gethostname()
+    """Get node ID and total number of nodes from SLURM environment variables."""
     try:
-        # Assuming hostname ends with node number (e.g., 'server-01')
-        node_id = int(hostname[-2:])
-        # Get total nodes from environment variable or default to 1
-        total_nodes = int(os.getenv('TOTAL_NODES', '1'))
+        # Get node ID from hostname (e.g., cluster-data-03 -> 3)
+        hostname = socket.gethostname()
+        node_id = int(hostname.split('-')[-1]) - 3  # Convert to 0-based index
+        total_nodes = 12  # Fixed number of nodes
         return node_id, total_nodes
-    except ValueError:
-        logger.warning(f"Could not parse node ID from hostname {hostname}, defaulting to single node mode")
+    except (ValueError, IndexError):
+        logger.warning("Could not parse node ID from hostname, defaulting to single node mode")
         return 0, 1
 
 def distribute_files(files: List[str], node_id: int, total_nodes: int) -> List[str]:
@@ -415,7 +414,7 @@ def main(
                 logger.info(f"Node {node_id} processing language: {lang} with {len(files)} files")
                 lang_output_dir = os.path.join(output, lang)
                 os.makedirs(lang_output_dir, exist_ok=True)
-                lang_output_path = os.path.join(lang_output_dir, f"dedup_node{node_id:02d}.jsonl")
+                lang_output_path = os.path.join(lang_output_dir, f"{lang}_dedup.jsonl")
                 
                 dedup_from_filelist(
                     files, lang_output_path, column, batch_size, num_proc, 

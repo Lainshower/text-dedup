@@ -4,22 +4,24 @@
 # parameters
 #
 #SBATCH --job-name=dedup_multidir_joonwon.jang
-#SBATCH --output=/lab-exaone/joonwon.jang/lg_stack/text-dedup/log/over_1000stars/log_dedup_%j_%u_%x.out
-#SBATCH --error=/lab-exaone/joonwon.jang/lg_stack/text-dedup/log/over_1000stars/log_dedup_%j_%u_%x.err
+#SBATCH --output=/lab-exaone/joonwon.jang/lg_stack/text-dedup/log/lg_stack_v1_DEDUP/log_dedup_%j_%u_%x.out
+#SBATCH --error=/lab-exaone/joonwon.jang/lg_stack/text-dedup/log/lg_stack_v1_DEDUP/log_dedup_%j_%u_%x.err
 #SBATCH --chdir=/lab-exaone/joonwon.jang/
 #SBATCH --partition=all
-#SBATCH --nodes=1
-#SBATCH --nodelist=cluster-data-[02]
+#SBATCH --nodes=12
+#SBATCH --ntasks-per-node=1
+#SBATCH --nodelist=cluster-data-[03-14]
 
 # Input/output directories (space-separated for multiple filtering outputs)
-input_dirs='/cl_data/exaone/joonwon.jang/pretrain/github_repos_2024_over_1000stars_raw/NON-PERMISSIVE_FILTERED_FILE /cl_data/exaone/joonwon.jang/pretrain/github_repos_2024_over_1000stars_raw/PERMISSIVE_FILTERED_FILE'
-output_dir='/cl_data/exaone/joonwon.jang/pretrain/github_repos_2024_over_1000stars_raw/NP-P-Dedup'
+input_dirs='/cl_data/exaone/joonwon.jang/pretrain/github_repos_2024_over_1000stars_raw/NON-PERMISSIVE_FILTERED_FILE /cl_data/exaone/joonwon.jang/pretrain/github_repos_2024_over_1000stars_raw/PERMISSIVE_FILTERED_FILE /cl_data/exaone/eunbi.choi/github_repos_2024_100-1000stars_raw/NON-PERMISSIVE_FILTERED_FILE /cl_data/exaone/eunbi.choi/github_repos_2024_100-1000stars_raw/PERMISSIVE_FILTERED_FILE /cl_data/exaone/eunbi.choi/github_repos_2024_50-100stars_raw/NON-PERMISSIVE_FILTERED_FILE /cl_data/exaone/eunbi.choi/github_repos_2024_50-100stars_raw/PERMISSIVE_FILTERED_FILE /cl_data/exaone/eunbi.choi/github_repos_2024_30-49stars_raw/NON-PERMISSIVE_FILTERED_FILE /cl_data/exaone/eunbi.choi/github_repos_2024_30-49stars_raw/PERMISSIVE_FILTERED_FILE /cl_data/exaone/eunbi.choi/github_repos_2024_18-29stars_raw/PERMISSIVE_FILTERED_FILE'
+
+output_dir='/cl_data/exaone/joonwon.jang/pretrain/lg_stack_v1_DEDUP'
 
 # Resource and deduplication parameters
-n_nodes=1
+n_nodes=12
 n_cores=128
 batch_size=10000
-threshold=0.8
+threshold=0.75
 num_perm=256
 ngram=3
 min_length=20
