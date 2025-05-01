@@ -178,15 +178,13 @@ def dedup_from_filelist(file_list, output_path, column, batch_size, num_proc, th
         RNG.randint(1, MODULO_PRIME, size=(num_perm,), dtype=DTYPE),  # a is a multiplier so should not be 0
         RNG.randint(0, MODULO_PRIME, size=(num_perm,), dtype=DTYPE),  # b
     )
-    with Timer("Total"):
-        with Timer("Loading"):
-            # Load distributed JSONL files using multiprocessing
-            node_files = distribute_files(file_list, node_id, total_nodes)
-            logger.info(f"Node {node_id}: Assigned {len(node_files)} files for deduplication")
+    with timer("Total"):
+        with timer("Loading"):
+            logger.info(f"Node {node_id}: Assigned {len(file_list)} files for deduplication")
             with mp.Pool(num_proc) as pool:
                 all_data = list(tqdm(
-                    pool.imap(process_file, node_files),
-                    total=len(node_files),
+                    pool.imap(process_file, file_list),
+                    total=len(file_list),
                     desc=f"Node {node_id}: Loading JSONL files"
                 ))
             data = [item for sublist in all_data for item in sublist]
@@ -200,7 +198,7 @@ def dedup_from_filelist(file_list, output_path, column, batch_size, num_proc, th
                 num_proc=num_proc,
             )
         LEN_DATASET = len(ds)
-        with Timer("MinHashing"):
+        with timer("MinHashing"):
             embedded = ds.map(
                 function=embed_func,
                 fn_kwargs={
@@ -225,7 +223,7 @@ def dedup_from_filelist(file_list, output_path, column, batch_size, num_proc, th
                 NUM_SHARDS = 1
             else:
                 NUM_SHARDS = np.ceil(LEN_EMBEDDED / batch_size).astype(int)
-        with Timer("Clustering"):
+        with timer("Clustering"):
             edges = []
             for i in tqdm(
                 range(0, NUM_SHARDS),
@@ -251,7 +249,7 @@ def dedup_from_filelist(file_list, output_path, column, batch_size, num_proc, th
                         edges.append((x, idx))
                         uf.union(x, idx)
             logger.info(f"Node {node_id}: Number of edges: {len(set(edges))}")
-        with Timer("Filtering"), DisableReferenceCount():
+        with timer("Filtering"), DisableReferenceCount():
             ds = ds.map(
                 function=lambda record: {CLUSTER_COLUMN: uf.find(record[INDEX_COLUMN])},
                 with_indices=False,
@@ -266,9 +264,11 @@ def dedup_from_filelist(file_list, output_path, column, batch_size, num_proc, th
                 num_proc=num_proc,
                 desc=f"Node {node_id}: Filtering clusters...",
             )
-        with Timer("Saving"):
+        with timer("Saving"):
             # Convert to list of dicts for JSONL saving
-            final_data = final_data.remove_columns([CLUSTER_COLUMN, INDEX_COLUMN])
+            columns_to_remove = [c for c in [CLUSTER_COLUMN, INDEX_COLUMN] if c in final_data.column_names]
+            if columns_to_remove:
+                final_data = final_data.remove_columns(columns_to_remove)
             output_data = final_data.to_list()
             save_jsonl(output_data, output_path, node_id)
     PAD = 32
